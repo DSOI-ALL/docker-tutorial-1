@@ -20,7 +20,7 @@ def index():
     db = client[db_name]
     r = lambda: random.randint(0,255)
     color = ('#%02X%02X%02X' % (r(),r(),r()))
-    db.colors.insert({"color":color})
+    db.colors.insert_one({"color":color})
     return """
     <p>Hello. Creating some default data everytime the page is visited.</p>
     <a href="http://localhost:8000/hello">See the data!</a>
