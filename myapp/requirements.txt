@@ -1,2 +1,2 @@
-bottle
-pymongo
+bottle==0.12.19
+pymongo==4.0.1
