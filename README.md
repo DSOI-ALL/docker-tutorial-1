@@ -1,102 +1,224 @@
 docker-tutorial-1
 =================
 
-Run a simple python web service in a docker container linking to database running in another container.
+Run a simple Python web service in a Docker container, manually connected to a MongoDB container — then simplify the whole thing with Docker Compose.
 
-###Demo
+**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running. No VM, no Vagrant, no extra tooling needed.
 
-Begin by starting in the `myapp` directory we created earlier on the virtual machine.  The rest of the tutorial will assume you are using, and on the command-line of the Vagrant-generated virtual machine provided with our [source code](https://github.com/SLS-ALL/docker-tutorial-1).
+---
 
-	cd /vagrant/myapp
+## Part 1: Running Containers Manually
 
-1. Run the mongo container, using the official mongoDB docker image.  This will take a moment to pull the necessary layers from the repository.
+This section walks through the core concepts: building an image, creating a user-defined network, and connecting two containers together — all by hand.
 
-		$ docker run --name mongo -d mongo
-		
-	The Docker `run` command starts a container.  In this instance we are starting a container named mongo (`--name mongo`).  You can name a container whatever you want.  The `-d` indicates to start the container in daemonized mode, or as a background process.  And finally, the second `mongo` is the name of the image to run.  If the image is not located locally it will attempt to pull an image named `mongo` from the Docker repository.
-	
-	To make sure it's working correctly, view the running docker containers by executing the `docker ps` command.
+### Step 1 — Start the MongoDB container
 
-		$ docker ps
+```bash
+docker network create myapp-net
+docker run --name mongo --network myapp-net -d mongo
+```
 
-		CONTAINER ID    IMAGE        COMMAND                  CREATED         STATUS         PORTS       NAMES
-		c1fc1ef13e1d    mongo:latest "/entrypoint.sh mongod   5 seconds ago   Up 5 seconds   27017/tcp   mongo
+The `docker network create` command creates a private bridge network called `myapp-net`.  Any containers attached to this network can reach each other by **container name** as a hostname — no need to hard-code IP addresses or use the deprecated `--link` flag.
 
+Verify the container is running:
 
-2. Build the python web service container. Make sure to include the trailing '.'
+```bash
+docker ps
+```
 
-		$ docker build -t webservice .
-	
-	This command creates a docker container named `webservice` based on the `Dockerfile` in the current directory.
+```
+CONTAINER ID   IMAGE   COMMAND                  CREATED         STATUS         PORTS       NAMES
+a3f9c21e7b12   mongo   "docker-entrypoint.s…"   3 seconds ago   Up 2 seconds   27017/tcp   mongo
+```
 
-3. Run our web service container and link it to the running mongo container.  Expose port 8000 and make it available to our host.
-  
-	*Notice that we also want to mount our local source code, so we can make code
-changes on the fly.  Use the full path of your **myapp** directory.*
+### Step 2 — Build the web service image
 
-		$ docker run --name webservice -p 8000:8000 -v /vagrant/myapp:/usr/src/app --link mongo:mongo -d webservice
+From the root of this repository, build the image from the `myapp` directory:
 
-4. Browse to *<http://localhost:8000/>* to initialize our data.
-5. Browse to *<http:/localhost:8000/hello>* or *use the link on the web app home page* to see the data pulled from our mongo database container.
+```bash
+docker build -t webservice ./myapp
+```
 
-That's all there is to linking containers and using the environment variables
-that are exposed to connect the containers together in an application.  
+This uses the `Dockerfile` in `myapp/` to create a local image tagged `webservice`.
 
-**But what if you want to actually get on the mongo console and see what is in your database?**
+### Step 3 — Run the web service container
 
-The docker way of doing this is to start up docker container based off of the existing mongo container an connect to your running instance.
+```bash
+docker run --name webservice \
+  --network myapp-net \
+  -p 8000:8000 \
+  -v "$(pwd)/myapp:/usr/src/app" \
+  -e MONGO_HOST=mongo \
+  -d webservice
+```
 
-There is no need to install the mongo client or shell tools on your own host or even guest OS.  The official mongo image we are using already has these tools, so we just need to need to start a new container and override it's entrypoint.  The only thing we need to know is the current IP Address of our running mongo container.  To get this address we inspect the container:
+Breaking this down:
 
-	$ docker inspect mongo
+| Flag | Purpose |
+|---|---|
+| `--network myapp-net` | Attach to the same network as mongo so the two containers can communicate |
+| `-p 8000:8000` | Publish container port 8000 to your host |
+| `-v $(pwd)/myapp:/usr/src/app` | Mount local source code into the container for live editing |
+| `-e MONGO_HOST=mongo` | Tell the app where to find MongoDB — `mongo` resolves to the mongo container on the shared network |
 
-Near the bottom of the output we are looking for the *IPAddress* value in the *NetworkSettings* configuration.
+### Step 4 — Try the app
 
-	"NetworkSettings": {
-        "Bridge": "docker0",
-        "Gateway": "172.17.42.1",
-        "IPAddress": "172.17.0.2",
-        "IPPrefixLen": 16,
-        "MacAddress": "02:42:ac:11:10:12",
-        "PortMapping": null,
-        "Ports": {
-            "27017/tcp": null
-        }
+- Visit **<http://localhost:8000/>** to add a random color to the database on each page load.
+- Visit **<http://localhost:8000/hello>** (or click the link on the home page) to see all stored colors rendered as colored blocks.
+
+---
+
+## Inspecting the Running MongoDB Container
+
+One of the most useful Docker skills is being able to look inside a running container.  Here's how to find where mongo is living on the network and then connect to its shell — **without installing mongo tools on your host machine**.
+
+### Inspect the container's network settings
+
+```bash
+docker inspect mongo
+```
+
+Scroll down to the `NetworkSettings` section.  You are looking for the container's IP address on your `myapp-net` network:
+
+```json
+"Networks": {
+    "myapp-net": {
+        "Gateway": "172.18.0.1",
+        "IPAddress": "172.18.0.2",
+        ...
     }
+}
+```
 
-In my case, the IP Address is ***172.17.0.2***.  So to start a mongo shell connecting to our mongo database we run the following:
+You can also extract just the IP with a format string:
 
-	$ docker run -i -t --name "mongoshell" --entrypoint "mongo" mongo 172.17.0.2
-	
-<!-- -->
+```bash
+docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' mongo
+```
 
-	MongoDB shell version: 2.6.6
-	connecting to: 172.17.0.2/test
-	Welcome to the MongoDB shell.
-	For interactive help, type "help".
-	For more comprehensive documentation, see
-	http://docs.mongodb.org/
-	Questions? Try the support group
-	http://groups.google.com/group/mongodb-user
-	>
+### Open a mongo shell on the running container
 
-We are now on the mongo shell of our mongo database.  You can now view the data we are creating when visiting <http://localhost:8000/> easily.  Our color
-data is in the database named '**slsdb**' in the '**colors**' collection.
+The modern mongo image ships with `mongosh` (the MongoDB Shell).  The cleanest way to open it is with `docker exec`, which runs a command inside an *already-running* container:
 
-	> use slsdb
-	switched to db slsdb
-	> show collections
-	colors
-	system.indexes
-	> db.colors.find()
-	{ "_id" : ObjectId("5485eb8a3b65a90017ea338e"), "color" : "#7DE6B6" }
-    { "_id" : ObjectId("5485ebd03b65a90017ea338f"), "color" : "#1C3160" }
-    { "_id" : ObjectId("5485ecfb3b65a9001a39cdce"), "color" : "#C8618C" }
-	{ "_id" : ObjectId("5485ee5d3b65a90026ff32d1"), "color" : "#973905" }
-	{ "_id" : ObjectId("5485ee5f3b65a90026ff32d2"), "color" : "#06076A" }
-	{ "_id" : ObjectId("5485ef643b65a9002fa9fcc6"), "color" : "#D5E272" }
-	{ "_id" : ObjectId("5485ef823b65a9002fa9fcc7"), "color" : "#9B459E" }
-	{ "_id" : ObjectId("5485ef863b65a9002fa9fcc8"), "color" : "#3C46EE" }
+```bash
+docker exec -it mongo mongosh
+```
 
+You're now inside the mongo shell.  Explore the data the web app is writing:
 
-That's all for now. Have fun developing with Docker!
+```
+> use slsdb
+switched to db slsdb
+
+> show collections
+colors
+
+> db.colors.find()
+[
+  { _id: ObjectId('...'), color: '#7DE6B6' },
+  { _id: ObjectId('...'), color: '#1C3160' },
+  ...
+]
+```
+
+Type `exit` to leave the shell.
+
+### Teardown
+
+When you're done with Part 1, stop and remove everything before moving on to Part 2:
+
+```bash
+docker stop webservice mongo
+docker rm webservice mongo
+docker network rm myapp-net
+```
+
+---
+
+## Part 2: Docker Compose
+
+You just did everything manually to understand what's happening under the hood.  Now let's see how **Docker Compose** collapses all of those commands into a single declarative file.
+
+Open `docker-compose.yml` in the project root:
+
+```yaml
+services:
+  mongo:
+    image: mongo
+    volumes:
+      - mongo-data:/data/db
+
+  webservice:
+    build: ./myapp
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_HOST=mongo
+    volumes:
+      - ./myapp:/usr/src/app
+    depends_on:
+      - mongo
+
+volumes:
+  mongo-data:
+```
+
+Notice how this maps directly to what we did by hand:
+
+| Manual command | Compose equivalent |
+|---|---|
+| `docker network create myapp-net` | Compose creates a default network automatically |
+| `docker run ... mongo` | The `mongo` service definition |
+| `docker build -t webservice ./myapp` | `build: ./myapp` under the `webservice` service |
+| `docker run ... -e MONGO_HOST=mongo ...` | `environment: - MONGO_HOST=mongo` |
+| `docker run ... -p 8000:8000 ...` | `ports: - "8000:8000"` |
+| `docker run ... -v $(pwd)/myapp:/usr/src/app ...` | `volumes: - ./myapp:/usr/src/app` |
+
+The `depends_on` key tells Compose to start `mongo` before `webservice`.  The named volume `mongo-data` persists database data across container restarts.
+
+### Start everything with one command
+
+From the project root:
+
+```bash
+docker compose up
+```
+
+Add `-d` to run in detached (background) mode:
+
+```bash
+docker compose up -d
+```
+
+Visit **<http://localhost:8000/>** — same app, same behavior, much less typing.
+
+### Useful Compose commands
+
+```bash
+# View running services
+docker compose ps
+
+# Stream logs from all services
+docker compose logs -f
+
+# Open a mongo shell (just like before, but using the compose service name)
+docker compose exec mongo mongosh
+
+# Stop and remove containers (data volume is preserved)
+docker compose down
+
+# Stop and remove containers AND the data volume
+docker compose down -v
+```
+
+### Rebuilding after code changes
+
+Because the source code is volume-mounted, edits to `webservice.py` take effect immediately (the Bottle reloader picks them up).  If you change `requirements.txt` or the `Dockerfile` itself, rebuild the image first:
+
+```bash
+docker compose up --build
+```
+
+---
+
+That's the full picture: manual container wiring to understand the fundamentals, then Compose to make it repeatable and shareable. Have fun developing with Docker!

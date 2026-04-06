@@ -1,0 +1,19 @@
+services:
+  mongo:
+    image: mongo
+    volumes:
+      - mongo-data:/data/db
+
+  webservice:
+    build: ./myapp
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_HOST=mongo
+    volumes:
+      - ./myapp:/usr/src/app
+    depends_on:
+      - mongo
+
+volumes:
+  mongo-data:

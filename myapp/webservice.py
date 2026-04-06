@@ -7,9 +7,11 @@ from pymongo import MongoClient
 # Configure DB params
 db_name = 'slsdb'
 
-# Configuration optional default development database host
-default_host = 'some-development-mongo-host'
-db_host = os.environ.get('MONGO_PORT_27017_TCP_ADDR', default_host)
+# MONGO_HOST is set via --env on docker run, or via the 'environment' key in docker-compose.yml.
+# When containers share a Docker network, the container name is resolvable as a hostname.
+# Default to 'mongo' so it works out-of-the-box with docker-compose without extra config.
+default_host = 'mongo'
+db_host = os.environ.get('MONGO_HOST', default_host)
 
 @route('/')
 def index():
@@ -22,7 +24,7 @@ def index():
     color = ('#%02X%02X%02X' % (r(),r(),r()))
     db.colors.insert_one({"color":color})
     return """
-    <p>Hello. Creating some default data everytime the page is visited.</p>
+    <p>Hello. Creating some default data every time the page is visited.</p>
     <a href="http://localhost:8000/hello">See the data!</a>
     """
 
